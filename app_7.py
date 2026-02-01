@@ -1,233 +1,205 @@
-
-import pandas            as pd
-import streamlit         as st
-import seaborn           as sns
+import pandas as pd
+import streamlit as st
+import seaborn as sns
 import matplotlib.pyplot as plt
-from PIL                 import Image
-from io                  import BytesIO
+from PIL import Image
+from io import BytesIO
 
-# Set no tema do seaborn para melhorar o visual dos plots
-custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+# ===============================
+# CONFIGURAÇÃO VISUAL
+# ===============================
+custom_params = {
+    "axes.spines.right": False,
+    "axes.spines.top": False
+}
 sns.set_theme(style="ticks", rc=custom_params)
 
+# ===============================
+# FUNÇÕES COM CACHE NOVO
+# ===============================
 
-# Função para ler os dados
-@st.cache(show_spinner= True, allow_output_mutation=True)
+@st.cache_data(show_spinner=True)
 def load_data(file_data):
-    try:
-        return pd.read_csv(file_data, sep=';')
-    except:
+    if file_data.name.endswith(".csv"):
+        return pd.read_csv(file_data, sep=";")
+    else:
         return pd.read_excel(file_data)
 
-# Função para filtrar baseado na multiseleção de categorias
-@st.cache(allow_output_mutation=True)
-def multiselect_filter(relatorio, col, selecionados):
-    if 'all' in selecionados:
-        return relatorio
-    else:
-        return relatorio[relatorio[col].isin(selecionados)].reset_index(drop=True)
 
-# Função para converter o df para csv
-@st.cache
+@st.cache_data
+def multiselect_filter(df, col, selecionados):
+    if "all" in selecionados:
+        return df
+    return df[df[col].isin(selecionados)].reset_index(drop=True)
+
+
+@st.cache_data
 def convert_df(df):
-    return df.to_csv(index=False).encode('utf-8')
+    return df.to_csv(index=False).encode("utf-8")
 
-# Função para converter o df para excel
-@st.cache
+
+@st.cache_data
 def to_excel(df):
     output = BytesIO()
-    writer = pd.ExcelWriter(output, engine='xlsxwriter')
-    df.to_excel(writer, index=False, sheet_name='Sheet1')
-    writer.close()
-    processed_data = output.getvalue()
-    return processed_data
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+    return output.getvalue()
 
+# ===============================
+# APLICAÇÃO PRINCIPAL
+# ===============================
 
-# Função principal da aplicação
 def main():
-    # Configuração inicial da página da aplicação
-    st.set_page_config(page_title = 'Telemarketing analisys', \
-        page_icon = 'telmarketing_icon.png',
+    st.set_page_config(
+        page_title="Telemarketing analysis",
+        page_icon="📊",
         layout="wide",
-        initial_sidebar_state='expanded'
+        initial_sidebar_state="expanded"
     )
 
-    # Título principal da aplicação
-    st.write('# Telemarketing analisys')
+    st.title("Telemarketing analysis")
     st.markdown("---")
-    
-    # Apresenta a imagem na barra lateral da aplicação
-    image = Image.open("Bank-Branding.jpg")
-    st.sidebar.image(image)
 
-    # Botão para carregar arquivo na aplicação
-    st.sidebar.write("## Suba o arquivo")
-    data_file_1 = st.sidebar.file_uploader("Bank marketing data", type = ['csv','xlsx'])
+    # SIDEBAR
+    try:
+        image = Image.open("Bank-Branding.jpg")
+        st.sidebar.image(image)
+    except:
+        st.sidebar.warning("Imagem não encontrada")
 
-    # Verifica se há conteúdo carregado na aplicação
-    if (data_file_1 is not None):
-        bank_raw = load_data(data_file_1)
-        bank = bank_raw.copy()
+    st.sidebar.subheader("Suba o arquivo")
+    data_file = st.sidebar.file_uploader(
+        "Bank marketing data",
+        type=["csv", "xlsx"]
+    )
 
-        st.write('## Antes dos filtros')
-        st.write(bank_raw.head())
+    if data_file is None:
+        st.info("👈 Faça upload de um arquivo para começar")
+        return
 
-        with st.sidebar.form(key='my_form'):
+    # ===============================
+    # DADOS
+    # ===============================
+    bank_raw = load_data(data_file)
+    bank = bank_raw.copy()
 
-            # SELECIONA O TIPO DE GRÁFICO
-            graph_type = st.radio('Tipo de gráfico:', ('Barras', 'Pizza'))
-        
-            # IDADES
-            max_age = int(bank.age.max())
-            min_age = int(bank.age.min())
-            idades = st.slider(label='Idade', 
-                                        min_value = min_age,
-                                        max_value = max_age, 
-                                        value = (min_age, max_age),
-                                        step = 1)
+    st.subheader("Antes dos filtros")
+    st.dataframe(bank_raw.head())
 
+    # ===============================
+    # FILTROS
+    # ===============================
+    with st.sidebar.form("filters"):
 
-            # PROFISSÕES
-            jobs_list = bank.job.unique().tolist()
-            jobs_list.append('all')
-            jobs_selected =  st.multiselect("Profissão", jobs_list, ['all'])
+        graph_type = st.radio(
+            "Tipo de gráfico",
+            ["Barras", "Pizza"]
+        )
 
-            # ESTADO CIVIL
-            marital_list = bank.marital.unique().tolist()
-            marital_list.append('all')
-            marital_selected =  st.multiselect("Estado civil", marital_list, ['all'])
+        min_age = int(bank.age.min())
+        max_age = int(bank.age.max())
+        idades = st.slider(
+            "Idade",
+            min_value=min_age,
+            max_value=max_age,
+            value=(min_age, max_age)
+        )
 
-            # DEFAULT?
-            default_list = bank.default.unique().tolist()
-            default_list.append('all')
-            default_selected =  st.multiselect("Default", default_list, ['all'])
+        def multiselect_with_all(label, series):
+            options = sorted(series.unique().tolist())
+            options.append("all")
+            return st.multiselect(label, options, ["all"])
 
-            
-            # TEM FINANCIAMENTO IMOBILIÁRIO?
-            housing_list = bank.housing.unique().tolist()
-            housing_list.append('all')
-            housing_selected =  st.multiselect("Tem financiamento imob?", housing_list, ['all'])
+        jobs = multiselect_with_all("Profissão", bank.job)
+        marital = multiselect_with_all("Estado civil", bank.marital)
+        default = multiselect_with_all("Default", bank.default)
+        housing = multiselect_with_all("Financiamento imobiliário", bank.housing)
+        loan = multiselect_with_all("Empréstimo", bank.loan)
+        contact = multiselect_with_all("Meio de contato", bank.contact)
+        month = multiselect_with_all("Mês do contato", bank.month)
+        day = multiselect_with_all("Dia da semana", bank.day_of_week)
 
-            
-            # TEM EMPRÉSTIMO?
-            loan_list = bank.loan.unique().tolist()
-            loan_list.append('all')
-            loan_selected =  st.multiselect("Tem empréstimo?", loan_list, ['all'])
+        submit = st.form_submit_button("Aplicar filtros")
 
-            
-            # MEIO DE CONTATO?
-            contact_list = bank.contact.unique().tolist()
-            contact_list.append('all')
-            contact_selected =  st.multiselect("Meio de contato", contact_list, ['all'])
+    # ===============================
+    # APLICAR FILTROS
+    # ===============================
+    bank = (
+        bank.query("age >= @idades[0] and age <= @idades[1]")
+        .pipe(multiselect_filter, "job", jobs)
+        .pipe(multiselect_filter, "marital", marital)
+        .pipe(multiselect_filter, "default", default)
+        .pipe(multiselect_filter, "housing", housing)
+        .pipe(multiselect_filter, "loan", loan)
+        .pipe(multiselect_filter, "contact", contact)
+        .pipe(multiselect_filter, "month", month)
+        .pipe(multiselect_filter, "day_of_week", day)
+    )
 
-            
-            # MÊS DO CONTATO
-            month_list = bank.month.unique().tolist()
-            month_list.append('all')
-            month_selected =  st.multiselect("Mês do contato", month_list, ['all'])
+    # ===============================
+    # RESULTADOS
+    # ===============================
+    st.subheader("Após os filtros")
+    st.dataframe(bank.head())
 
-            
-            # DIA DA SEMANA
-            day_of_week_list = bank.day_of_week.unique().tolist()
-            day_of_week_list.append('all')
-            day_of_week_selected =  st.multiselect("Dia da semana", day_of_week_list, ['all'])
+    st.download_button(
+        "📥 Download Excel",
+        data=to_excel(bank),
+        file_name="bank_filtered.xlsx"
+    )
 
+    st.markdown("---")
 
-                    
-            # encadeamento de métodos para filtrar a seleção
-            bank = (bank.query("age >= @idades[0] and age <= @idades[1]")
-                        .pipe(multiselect_filter, 'job', jobs_selected)
-                        .pipe(multiselect_filter, 'marital', marital_selected)
-                        .pipe(multiselect_filter, 'default', default_selected)
-                        .pipe(multiselect_filter, 'housing', housing_selected)
-                        .pipe(multiselect_filter, 'loan', loan_selected)
-                        .pipe(multiselect_filter, 'contact', contact_selected)
-                        .pipe(multiselect_filter, 'month', month_selected)
-                        .pipe(multiselect_filter, 'day_of_week', day_of_week_selected)
-            )
+    # ===============================
+    # PROPORÇÕES
+    # ===============================
+    raw_perc = bank_raw.y.value_counts(normalize=True).sort_index() * 100
+    filt_perc = bank.y.value_counts(normalize=True).sort_index() * 100
 
+    col1, col2 = st.columns(2)
 
-            submit_button = st.form_submit_button(label='Aplicar')
-        
-        # Botões de download dos dados filtrados
-        st.write('## Após os filtros')
-        st.write(bank.head())
-        
-        df_xlsx = to_excel(bank)
-        st.download_button(label='📥 Download tabela filtrada em EXCEL',
-                            data=df_xlsx ,
-                            file_name= 'bank_filtered.xlsx')
-        st.markdown("---")
+    col1.subheader("Proporção original")
+    col1.dataframe(raw_perc)
+    col1.download_button(
+        "Download",
+        data=to_excel(raw_perc.reset_index()),
+        file_name="bank_raw_y.xlsx"
+    )
 
-        # PLOTS    
-        fig, ax = plt.subplots(1, 2, figsize = (5,3))
+    col2.subheader("Proporção filtrada")
+    col2.dataframe(filt_perc)
+    col2.download_button(
+        "Download",
+        data=to_excel(filt_perc.reset_index()),
+        file_name="bank_y.xlsx"
+    )
 
-        bank_raw_target_perc = bank_raw.y.value_counts(normalize = True).to_frame()*100
-        bank_raw_target_perc = bank_raw_target_perc.sort_index()
-        
-        try:
-            bank_target_perc = bank.y.value_counts(normalize = True).to_frame()*100
-            bank_target_perc = bank_target_perc.sort_index()
-        except:
-            st.error('Erro no filtro')
-        
-        # Botões de download dos dados dos gráficos
-        col1, col2 = st.columns(2)
+    st.markdown("---")
 
-        df_xlsx = to_excel(bank_raw_target_perc)
-        col1.write('### Proporção original')
-        col1.write(bank_raw_target_perc)
-        col1.download_button(label='📥 Download',
-                            data=df_xlsx ,
-                            file_name= 'bank_raw_y.xlsx')
-        
-        df_xlsx = to_excel(bank_target_perc)
-        col2.write('### Proporção da tabela com filtros')
-        col2.write(bank_target_perc)
-        col2.download_button(label='📥 Download',
-                            data=df_xlsx ,
-                            file_name= 'bank_y.xlsx')
-        st.markdown("---")
-    
+    # ===============================
+    # GRÁFICOS
+    # ===============================
+    st.subheader("Proporção de aceite")
 
-        st.write('## Proporção de aceite')
-        # PLOTS    
-        if graph_type == 'Barras':
-            sns.barplot(x = bank_raw_target_perc.index, 
-                        y = 'y',
-                        data = bank_raw_target_perc, 
-                        ax = ax[0])
-            ax[0].bar_label(ax[0].containers[0])
-            ax[0].set_title('Dados brutos',
-                            fontweight ="bold")
-            
-            sns.barplot(x = bank_target_perc.index, 
-                        y = 'y', 
-                        data = bank_target_perc, 
-                        ax = ax[1])
-            ax[1].bar_label(ax[1].containers[0])
-            ax[1].set_title('Dados filtrados',
-                            fontweight ="bold")
-        else:
-            bank_raw_target_perc.plot(kind='pie', autopct='%.2f', y='y', ax = ax[0])
-            ax[0].set_title('Dados brutos',
-                            fontweight ="bold")
-            
-            bank_target_perc.plot(kind='pie', autopct='%.2f', y='y', ax = ax[1])
-            ax[1].set_title('Dados filtrados',
-                            fontweight ="bold")
+    fig, ax = plt.subplots(1, 2, figsize=(8, 4))
 
-        st.pyplot(plt)
+    if graph_type == "Barras":
+        sns.barplot(x=raw_perc.index, y=raw_perc.values, ax=ax[0])
+        ax[0].set_title("Dados brutos")
+
+        sns.barplot(x=filt_perc.index, y=filt_perc.values, ax=ax[1])
+        ax[1].set_title("Dados filtrados")
+
+    else:
+        raw_perc.plot(kind="pie", autopct="%.2f%%", ax=ax[0])
+        ax[0].set_title("Dados brutos")
+
+        filt_perc.plot(kind="pie", autopct="%.2f%%", ax=ax[1])
+        ax[1].set_title("Dados filtrados")
+
+    st.pyplot(fig)
 
 
-if __name__ == '__main__':
-	main()
-    
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    main()
 
